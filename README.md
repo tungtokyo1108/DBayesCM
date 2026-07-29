@@ -9,3 +9,7 @@
     </td>
   </tr>
 </table>
+
+## The workflow of DBayesCM
+
+<img src="DBayesCM_method.png" width="1000" height="500">
