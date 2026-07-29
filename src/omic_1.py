@@ -62,6 +62,7 @@ import math
 import warnings
 from collections.abc import Iterable
 
+import os
 import numpy as np
 import torch
 import torch.nn as nn
@@ -1021,7 +1022,7 @@ class DecoderDBGCM(nn.Module):
 # =============================================================================
 class DBayesCM(pl.LightningModule):
     """
-    Hyperspherical (S-VAE) version of DBayesCM.
+    Hyperspherical (S-VAE) version of DBayGenCM.
 
     Identical training/eval interface to v2.2; the only modelling differences:
       * encoder  -> EncoderHyperspherical (vMF posterior, z on the sphere)
@@ -1107,6 +1108,16 @@ class DBayesCM(pl.LightningModule):
         self.train_theta_all_epochs = []
         self.train_z_sample_all_epochs = []
         self.val_kappa_history = []
+
+        # --- vMF hypersphere GEOMETRY per validation epoch (for visualisation),
+        # aligned 1-to-1 with ari_history / val_theta_all_epochs. Indexing these
+        # at the best-ARI epoch gives exactly the geometry behind the top ARI.
+        self.val_mu_all_epochs = []            # [epoch] -> [N, D]  encoder mean direction
+        self.val_kappa_all_epochs = []         # [epoch] -> [N]     encoder concentration
+        self.val_z_all_epochs = []             # [epoch] -> [N, D]  on-sphere sample
+        self.val_centres_all_epochs = []       # [epoch] -> [K, D]  vMF cluster centres
+        self.val_cluster_kappa_all_epochs = [] # [epoch] -> [K]     per-cluster kappa
+        self.val_labels_all_epochs = []        # [epoch] -> [N]     true labels (aligned)
 
         self._train_losses_epoch = []
         self._val_losses_epoch = []
@@ -1335,6 +1346,8 @@ class DBayesCM(pl.LightningModule):
         self._val_labels_epoch = []
         self._val_z_sample_list = []
         self._val_kappa_list = []
+        self._val_mu_list = []
+        self._val_z_list = []
 
     def validation_step(self, batch, batch_idx):
         x = batch["Microbiome"]
@@ -1348,7 +1361,10 @@ class DBayesCM(pl.LightningModule):
             rho, theta = self.get_decoder_outputs(x)
             z_sample = torch.sigmoid(self.decoder.spike_logit)
             inf = self.inference(x)
+            # vMF encoder geometry: qz_m = mean direction, qz_v = kappa, z = sample
             self._val_kappa_list.append(inf["qz_v"].detach().cpu())
+            self._val_mu_list.append(inf["qz_m"].detach().cpu())
+            self._val_z_list.append(inf["z"].detach().cpu())
 
         self._val_rho_list.append(rho.detach().cpu())
         self._val_theta_list.append(theta.detach().cpu())
@@ -1378,8 +1394,31 @@ class DBayesCM(pl.LightningModule):
             self.val_theta_all_epochs.append(all_theta)
             self.val_z_sample_all_epochs.append(all_z_sample)
 
+            # -----------------------------------------------------------------
+            # Store the vMF GEOMETRY for THIS epoch, aligned 1-to-1 with
+            # val_theta_all_epochs / ari_history. Indexing at the best-ARI epoch
+            # yields exactly the geometry behind the highest ARI (the same theta
+            # that scored it) -- ready for hypersphere visualisation, no re-run.
+            # -----------------------------------------------------------------
+            all_mu = torch.cat(self._val_mu_list, dim=0)        # [N, D]
+            all_kappa = torch.cat(self._val_kappa_list, dim=0)  # [N]
+            all_z = torch.cat(self._val_z_list, dim=0)          # [N, D]
+            self.val_mu_all_epochs.append(all_mu)
+            self.val_kappa_all_epochs.append(all_kappa)
+            self.val_z_all_epochs.append(all_z)
+            self.val_labels_all_epochs.append(all_labels)       # true labels, same order
+
+            # cluster geometry of the mixture-of-vMF at this epoch. v3 parameterises
+            # the per-cluster concentration directly as cluster_log_kappa (NOT the
+            # Gamma a/b used in v2.5), so kappa_k = exp(cluster_log_kappa).
+            with torch.no_grad():
+                centres = F.normalize(self.decoder.means, p=2, dim=1).detach().cpu()   # [K, D]
+                cluster_kappa = torch.exp(self.decoder.cluster_log_kappa).clamp(1e-2, 1e4).detach().cpu()  # [K]
+            self.val_centres_all_epochs.append(centres)
+            self.val_cluster_kappa_all_epochs.append(cluster_kappa)
+
             if len(self._val_kappa_list) > 0:
-                mean_kappa = torch.cat(self._val_kappa_list, dim=0).mean().item()
+                mean_kappa = all_kappa.mean().item()
                 self.val_kappa_history.append(mean_kappa)
                 print(f"Epoch {self.current_epoch} ARI: {ari:.4f}  (mean kappa: {mean_kappa:.2f})")
             else:
@@ -1419,6 +1458,66 @@ class MicrobiomeDataset(Dataset):
 
     def __getitem__(self, idx):
         return {"Microbiome": self.X[idx], "Labels": self.y[idx]}
+
+
+# =============================================================================
+#  Hypersphere-visualisation helpers (permutation null + best-ARI geometry save)
+#  Mirrors DBayGenCM_2omics_v2.5. Adapted to 1-omics (MicrobiomeDataset(X, y))
+#  and to this model's per-epoch buffers, which are populated during training:
+#    val_mu / val_kappa / val_z / val_centres / val_cluster_kappa / val_theta /
+#    val_labels  (all *_all_epochs, aligned 1-to-1 with ari_history).
+#  Import and call these from your own training/seed-sweep runner.
+# =============================================================================
+def permutation_null(y_true, y_pred, n_perm, rng):
+    """Empirical null for ARI by shuffling the TRUE labels: z-score + p-value."""
+    obs = adjusted_rand_score(y_true, y_pred)
+    null = np.empty(n_perm, dtype=np.float64)
+    yt = np.asarray(y_true).copy()
+    for i in range(n_perm):
+        rng.shuffle(yt)
+        null[i] = adjusted_rand_score(yt, y_pred)
+    mu, sd = null.mean(), null.std(ddof=1)
+    z = (obs - mu) / (sd + 1e-12)
+    p_emp = (1.0 + np.sum(null >= obs)) / (n_perm + 1.0)
+    return dict(obs_ari=obs, null=null, null_mean=mu, null_std=sd, z_score=z, p_emp=p_emp)
+
+
+def save_best_geometry(model, seed, best_ep, best_ari, y_pred, yva, out_dir="."):
+    """
+    Index every per-epoch vMF buffer at `best_ep` -> the exact highest-ARI state.
+    The saved theta is the SAME one that scored best_ari, so ARI recomputed from
+    it matches (ari_from_saved_theta). 1-omics hyperspherical S-VAE geometry:
+    mu/kappa/z (encoder) + theta/centres/cluster_kappa (mixture-of-vMF) + labels.
+    """
+    theta_best   = model.val_theta_all_epochs[best_ep]
+    mu_best      = model.val_mu_all_epochs[best_ep]
+    kappa_best   = model.val_kappa_all_epochs[best_ep]
+    z_best       = model.val_z_all_epochs[best_ep]
+    centres_best = model.val_centres_all_epochs[best_ep]
+    ckappa_best  = model.val_cluster_kappa_all_epochs[best_ep]
+
+    y_true = np.asarray(yva, dtype=np.int64)
+    y_pred = np.asarray(y_pred, dtype=np.int64)
+    ari_check = adjusted_rand_score(y_true, y_pred)     # should equal best_ari
+
+    path = os.path.join(out_dir, f"best_seed{seed}_geometry.npz")
+    np.savez(
+        path,
+        seed=np.int64(seed), best_epoch=np.int64(best_ep),
+        best_ari=np.float64(best_ari), ari_from_saved_theta=np.float64(ari_check),
+        n_latent=np.int64(mu_best.shape[1]), n_clusters=np.int64(centres_best.shape[0]),
+        # vMF encoder
+        mu=mu_best.cpu().numpy(), kappa=kappa_best.cpu().numpy(), z=z_best.cpu().numpy(),
+        # mixture-of-vMF clustering
+        theta=theta_best.cpu().numpy(), centres=centres_best.cpu().numpy(),
+        cluster_kappa=ckappa_best.cpu().numpy(),
+        # labels
+        y_true=y_true, y_pred=y_pred,
+    )
+    print(f"   [geometry] seed {seed}: saved best-ARI hypersphere geometry "
+          f"(ep {best_ep}, ARI {best_ari:.4f}, ARI-from-saved-theta {ari_check:.4f}) "
+          f"-> {path}", flush=True)
+    return ari_check
 
 
 # =============================================================================
@@ -1470,7 +1569,7 @@ if __name__ == "__main__":
           f"| rho_kl={rho_kl.item():.3f} | theta_kl={theta_kl.item():.3f}")
 
     print("\n  Full model loss smoke test:")
-    model = DBayesCM(n_genes=120, n_latent=64, n_clusters=10, latent_distribution="vmf")
+    model = DBayGenCM(n_genes=120, n_latent=64, n_clusters=10, latent_distribution="vmf")
     loss = model.compute_loss(x)
     print(f"    loss = {loss.item():.4f}")
     loss.backward()
