@@ -1443,7 +1443,7 @@ class DecoderDBGCM_vMF(nn.Module):
         
         return kl_total 
 
-class DBayGenCM(pl.LightningModule):
+class DBayesCM(pl.LightningModule):
     
     def __init__(
             self,
