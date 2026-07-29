@@ -1,18 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-Run the 1-omics hyperspherical S-VAE (v3) on CDI and save the best-ARI vMF
-hypersphere geometry per seed -- the CDI analogue of the yachida_sphere run.
 
-Loads CDI the same way as save_best_seed_for_sphere3d.py (DiseaseState 3-class,
-matched microbiome/meta indices, 80/20 stratified split per seed), trains on CPU
-(torch.lgamma CUDA kernel is broken on this box), then calls the model file's
-own save_best_geometry() to write best_seed{N}_geometry.npz containing
-mu/kappa/z (encoder) + theta/centres/cluster_kappa (mixture-of-vMF) + labels,
-all indexed at the highest-ARI epoch. Also runs a permutation-null test.
-
-Config: N_SEEDS=3, MAX_EPOCHS=1500 (quick pipeline validation).
-"""
 import warnings
 warnings.filterwarnings("ignore")
 
