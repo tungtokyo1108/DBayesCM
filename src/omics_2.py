@@ -8,6 +8,7 @@ Created on Wed Oct  9 15:04:41 2024
 
 import tempfile
 
+import os
 #import anndata as ad
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -2115,7 +2116,51 @@ class MicrobiomeDataset(Dataset):
         }
 
 
+def permutation_null(y_true, y_pred, n_perm, rng):
+    obs = adjusted_rand_score(y_true, y_pred)
+    null = np.empty(n_perm, dtype=np.float64)
+    yt = np.asarray(y_true).copy()
+    for i in range(n_perm):
+        rng.shuffle(yt)
+        null[i] = adjusted_rand_score(yt, y_pred)
+    mu, sd = null.mean(), null.std(ddof=1)
+    z = (obs - mu) / (sd + 1e-12)
+    p_emp = (1.0 + np.sum(null >= obs)) / (n_perm + 1.0)
+    return dict(obs_ari=obs, null=null, null_mean=mu, null_std=sd, z_score=z, p_emp=p_emp)
 
+def save_best_geometry(model, seed, best_ep, best_ari, y_pred, yva):
+    """
+    Index every per-epoch buffer at `best_ep` -> the exact highest-ARI state.
+    The saved theta is the SAME one that scored best_ari, so ARI from it matches.
+    """
+    theta_best   = model.val_theta_all_epochs[best_ep]
+    mu_best      = model.val_mu_all_epochs[best_ep]
+    kappa_best   = model.val_kappa_all_epochs[best_ep]
+    z_best       = model.val_z_all_epochs[best_ep]
+    centres_best = model.val_centres_all_epochs[best_ep]
+    ckappa_best  = model.val_cluster_kappa_all_epochs[best_ep]
+
+    y_true = np.asarray(yva, dtype=np.int64)
+    y_pred = np.asarray(y_pred, dtype=np.int64)
+    ari_check = adjusted_rand_score(y_true, y_pred)     # should equal best_ari
+
+    np.savez(
+        os.path.join(f"best_seed{seed}_geometry.npz"),
+        seed=np.int64(seed), best_epoch=np.int64(best_ep),
+        best_ari=np.float64(best_ari), ari_from_saved_theta=np.float64(ari_check),
+        n_latent=np.int64(mu_best.shape[1]), n_clusters=np.int64(centres_best.shape[0]),
+        # vMF encoder
+        mu=mu_best.cpu().numpy(), kappa=kappa_best.cpu().numpy(), z=z_best.cpu().numpy(),
+        # vMF clustering
+        theta=theta_best.cpu().numpy(), centres=centres_best.cpu().numpy(),
+        cluster_kappa=ckappa_best.cpu().numpy(),
+        # labels
+        y_true=y_true, y_pred=y_pred,
+        #label_names=np.array(label_names, dtype=object),
+    )
+    print(f"   [geometry] seed {seed}: saved best-ARI geometry (ep {best_ep}, "
+          f"ARI {best_ari:.4f}, ARI-from-saved-theta {ari_check:.4f})", flush=True)
+    return ari_check
 
 
 
