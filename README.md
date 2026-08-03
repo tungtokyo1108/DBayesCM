@@ -5,7 +5,7 @@
     </td>
     <td>
       <h1>DBayesCM</h1>
-      <h3>Dang, T., Lysenko, A., & Tsunoda, T. (2026). A hyperspherical deep Bayesian model for interpretable clustering and relationship prediction in microbiome multi-omics integration. bioRxiv, 2026-08.</h3>
+      <h3>Dang, T., Lysenko, A., & Tsunoda, T. (2026). bioRxiv, 2026-08.</h3>
     </td>
   </tr>
 </table>
