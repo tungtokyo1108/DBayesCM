@@ -1,7 +1,7 @@
 <table border="0">
   <tr>
     <td>
-      <img src="Logo.png" alt="DBayesCM Logo" width="450" valign="middle">
+      <img src="Logo.png" alt="DBayesCM Logo" width="450" valign="large">
     </td>
     <td>
       <h1>DBayesCM</h1>
