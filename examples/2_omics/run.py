@@ -77,15 +77,6 @@ for si, seed in enumerate(range(N_SEEDS)):
                       n_layers_encoder_individual = 2,
                       dim_hidden_encoder = 128,
                       learning_rate=1e-3, 
-                      n_samples=100,
-                      alpha_0=0.01,
-                      pip0_rho = 0.1, # Higher sparsity 0.05 or 0.01
-                      c_reg = 1.0, # Regularization constant for horseshoe smaller values like 0.1 or 0.01 for stronger shrinkage
-                      d0 = 1.0,  # Scale parameter for global scale
-                      sigma0 = 1.0,
-                      use_log_transform = True,
-                      use_LayerNorm = True,
-                      combine_method = "concat" # add or concat
                       )
 
     trainer = pl.Trainer(max_epochs=5000, log_every_n_steps=1, enable_progress_bar=True, callbacks=[RichProgressBar()], 
