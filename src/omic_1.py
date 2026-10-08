@@ -46,31 +46,6 @@ def stick_breaking(v: torch.Tensor):
     pi = v * cumprod_v
     return pi
 
-
-# =============================================================================
-#  Modified Bessel functions of the first kind (exponentially scaled)
-# =============================================================================
-#  We need  I_v(kappa)  and ratios  I_{v}(k) / I_{v-1}(k)  to compute both the
-#  vMF normalising constant C_m(kappa) and the KL divergence to the uniform
-#  distribution.  For numerical stability we work with the *exponentially
-#  scaled* Bessel function  ive(v, k) = I_v(k) * exp(-k)  so that the exp(kappa)
-#  in C_m(kappa) cancels and we never overflow for large kappa.
-#
-#  PyTorch ships `torch.special.i0e` / `i1e` (orders 0 and 1).  For the general
-#  half-integer order m/2 - 1 that the vMF needs we combine two differentiable
-#  branches, both expressed for the exponentially scaled  ive(v, k) = I_v(k) e^{-k}:
-#
-#    * small/medium k  : the ascending power series of I_v(k) in log space.
-#    * large k OR large order : the UNIFORM (Debye) asymptotic expansion, which
-#      stays accurate even when the order v is large relative to k.  This matters
-#      a lot here because the vMF order is m/2 - 1, so for a 64-dim latent the
-#      order is ~31 and the naive large-argument Hankel series (valid only for
-#      k >> v^2) would be wrong.  The uniform expansion is valid for large v and
-#      any k, which is exactly the operating regime of a high-dim S-VAE.
-#
-#  The crossover is chosen so each branch is used only where it is accurate, and
-#  the whole thing is differentiable w.r.t. k (no scipy in the training loop).
-# =============================================================================
 def _log_ive_series(v: float, k: torch.Tensor, n_terms: int = 40) -> torch.Tensor:
     """log( I_v(k) e^{-k} ) via the ascending power series (good for small k).
 
@@ -132,9 +107,6 @@ def log_ive(v: float, k: torch.Tensor) -> torch.Tensor:
     with the order so high-dim vMFs (large order) are handled correctly.
     """
     k = k.clamp(min=1e-8)
-    # The series needs ~k terms to converge; switch to the uniform expansion once
-    # k grows past a small multiple of max(v, 1).  This keeps the series in its
-    # cheap, accurate regime and hands large-(k or v) cases to the Debye form.
     thresh = max(2.0 * v, 12.0)
     log_series = _log_ive_series(v, k)
     log_unif = _log_ive_uniform(v, k)
@@ -151,26 +123,6 @@ def ive_ratio(v: float, k: torch.Tensor) -> torch.Tensor:
     """
     return torch.exp(log_ive(v, k) - log_ive(v - 1.0, k))
 
-
-# =============================================================================
-#  Spherical k-means  (warm start for the mixture-of-vMF, analogous to the
-#  k-means init that scikit-learn's BayesianGaussianMixture uses, but in the
-#  correct geometry for a unit-norm latent).
-# =============================================================================
-#  scikit-learn warm-starts `BayesianGaussianMixture` by running plain k-means
-#  on the data and seeding the responsibilities from the result (see
-#  sklearn/mixture/_bayesian_mixture.py, init_params="kmeans").  That breaks the
-#  symmetry of the variational mixture and avoids the poor local optima you get
-#  from a near-uniform random start.
-#
-#  Our cluster model (`DecoderDBGCM.MixtureOfVMF`) is a mixture of vMFs whose
-#  log-likelihood is driven by COSINE similarity kappa_k * (c_k . z) on the unit
-#  sphere, NOT L2 distance.  So the correct analogue is *spherical* k-means,
-#  which minimises (1 - cos) and yields unit-norm centroids -- exactly the
-#  parameterisation of `self.means`.  We additionally recover a per-cluster
-#  concentration kappa_k from the mean resultant length r_k via the standard vMF
-#  moment estimator r = I_{m/2}(k)/I_{m/2-1}(k), inverted with `ive_ratio`.
-# =============================================================================
 def _estimate_vmf_kappa(r: torch.Tensor, m: int,
                         kappa_min: float = 1e-2, kappa_max: float = 1e4) -> torch.Tensor:
     """
