@@ -1,60 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Created on 2026-06-17
 
 @author: tungbioinfo
-
-================================================================================
- ver3 : Hyperspherical (S-VAE) variant of DBayGenCM
-================================================================================
-
-This file is a drop-in *ver3* counterpart to
-    DBayGenCM_1omics_v2.2_diagonal_SS-GH_sigmod.py   (the Gaussian "N-VAE")
-
-It replaces the Gaussian variational posterior  q(z|x) = N(mu, sigma^2 I)
-of the encoder with a **von Mises-Fisher (vMF)** posterior on the unit
-hypersphere  S^{m-1},  following
-
-    Davidson, Falorsi, De Cao, Kipf, Tomczak (2018)
-    "Hyperspherical Variational Auto-Encoders" (UAI 2018).
-
-Why this should improve the encoder for this model
---------------------------------------------------
-* The original model clusters the latent code z with a (truncated) Dirichlet
-  Process Gaussian Mixture. A Gaussian prior N(0, I) has "origin gravity":
-  it pulls every cluster centre toward 0, which is exactly the failure mode
-  the paper describes for clustered data (Sec. 2.2). The vMF posterior with a
-  *uniform* prior on the sphere removes this pull, letting clusters spread out
-  evenly and become more separable (the paper's Tables 2 & 3 show large gains
-  in clusterability / semi-supervised accuracy in low dimensions).
-* On the sphere the natural similarity is cosine similarity, which is a more
-  meaningful distance in moderate/high dimension than the L2 norm.
-
-What was changed relative to v2.2 (only the encoder side is touched)
---------------------------------------------------------------------
-  1. `VonMisesFisher`           : differentiable vMF sample + KL-to-uniform,
-                                  Bessel functions via exponentially-scaled
-                                  modified Bessel (no scipy needed at runtime).
-  2. `HouseholderRotation`      : rotates e_1 -> mu  (Ulrich 1984, Alg. 1).
-  3. `EncoderHyperspherical`    : outputs (mu_dir, kappa) and an on-sphere z.
-  4. `DecoderDBGCM`             : adds an OPTIONAL mixture-of-vMF latent
-                                  clustering (`latent_distribution="vmf"`) so
-                                  the DP mixture lives on the same sphere as
-                                  the posterior. The Gaussian DP path is kept
-                                  for ablation (`latent_distribution="normal"`).
-  5. `DBayGenCM`                : KL(vMF || Uniform) replaces KL(N || N);
-                                  everything downstream (spike-and-slab +
-                                  regularized horseshoe decoder, Dirichlet-
-                                  multinomial likelihood) is UNCHANGED so the
-                                  comparison against v2.2 is clean.
-
-The decoder (spike-and-slab + regularized horseshoe + Dirichlet-multinomial)
-and the training / evaluation scaffolding are kept identical to v2.2 so that
-any change in ARI / log-likelihood is attributable to the encoder.
-
-Run side by side with v2.2 to reproduce the N-VAE vs S-VAE comparison of the
-paper on your own microbiome data.
 """
 
 import collections
