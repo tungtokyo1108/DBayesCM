@@ -69,8 +69,7 @@ def main():
         # progress bar disabled: RichProgressBar crashes on this cp932 console
         trainer = pl.Trainer(max_epochs=MAX_EPOCHS, log_every_n_steps=1,
                              enable_progress_bar=False,
-                             accelerator="cpu", devices=1,
-                             enable_checkpointing=False, logger=False)
+                             accelerator="cpu", devices=1)
         trainer.fit(model, trl, val)
 
         ari_hist = np.array(model.ari_history)
