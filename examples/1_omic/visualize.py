@@ -1,16 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-3D hypersphere visualisation of the 1-omics S-VAE (v3) on CDI, for EVERY seed
-whose best-ARI geometry was saved by run_cdi_sphere.py into Data/cdi_sphere/.
 
-Same style as the yachida_sphere figures: project the S^63 vMF mode directions
-to S^2 (top-3 PCA, renormalised), colour LEFT by true DiseaseState and RIGHT by
-predicted cluster (Hungarian-mapped to state names, empirical centres computed
-IN the S^2 space and coloured to match their cluster).
-
-CDI has THREE classes (ignore-nonCDI / CDI / H).
-"""
 import warnings
 warnings.filterwarnings("ignore")
 
